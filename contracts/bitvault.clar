@@ -161,3 +161,92 @@
     (ok true)
   )
 )
+
+;; READ-ONLY FUNCTIONS
+
+;; Retrieve complete option data by ID
+(define-read-only (get-option (option-id uint))
+  (map-get? Options { option-id: option-id })
+)
+
+;; Get user balance from internal accounting
+(define-read-only (get-user-balance (user principal))
+  (default-to { balance: u0 } (map-get? UserBalances { user: user }))
+)
+
+;; Current BTC price oracle (placeholder for real oracle integration)
+(define-read-only (get-current-price)
+  u50000000000
+)
+
+;; $50,000 with 8 decimal places precision
+
+;; Contract statistics and metrics
+(define-read-only (get-contract-stats)
+  {
+    total-options: (var-get total-options-created),
+    exercised-options: (var-get total-options-exercised),
+    next-id: (var-get next-option-id),
+  }
+)
+
+;; PUBLIC FUNCTIONS
+
+;; Create a new options contract with full validation
+(define-public (create-option
+    (sbtc-token <ft-trait>)
+    (option-type (string-ascii 4))
+    (strike-price uint)
+    (premium uint)
+    (collateral uint)
+    (expiry uint)
+  )
+  (let (
+      (option-id (var-get next-option-id))
+      (current-height block-height)
+    )
+    ;; Comprehensive input validation
+    (asserts! (is-valid-option-type option-type) ERR-INVALID-OPTION-TYPE)
+    (try! (validate-strike-price strike-price))
+    (try! (validate-amounts premium collateral))
+    (try! (check-expiry expiry))
+    ;; Secure collateral transfer to contract
+    (try! (transfer-sbtc sbtc-token collateral tx-sender (as-contract tx-sender)))
+    ;; Create new option record
+    (map-set Options { option-id: option-id } {
+      writer: tx-sender,
+      holder: tx-sender,
+      option-type: option-type,
+      strike-price: strike-price,
+      premium: premium,
+      collateral: collateral,
+      expiry: expiry,
+      exercised: false,
+      created-at: current-height,
+    })
+    ;; Update global contract state
+    (var-set next-option-id (+ option-id u1))
+    (var-set total-options-created (+ (var-get total-options-created) u1))
+    (ok option-id)
+  )
+)
+
+;; Purchase an existing option from the marketplace
+(define-public (buy-option
+    (sbtc-token <ft-trait>)
+    (option-id uint)
+  )
+  (let ((option (unwrap! (get-option option-id) ERR-OPTION-NOT-FOUND)))
+    ;; Validate option state and buyer eligibility
+    (try! (check-expiry (get expiry option)))
+    (asserts! (not (get exercised option)) ERR-ALREADY-EXERCISED)
+    (asserts! (not (is-eq tx-sender (get writer option))) ERR-NOT-AUTHORIZED)
+    ;; Execute premium payment to option writer
+    (try! (transfer-sbtc sbtc-token (get premium option) tx-sender (get writer option)))
+    ;; Transfer option ownership to buyer
+    (map-set Options { option-id: option-id }
+      (merge option { holder: tx-sender })
+    )
+    (ok true)
+  )
+)
