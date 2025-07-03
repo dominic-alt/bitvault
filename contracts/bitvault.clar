@@ -250,3 +250,62 @@
     (ok true)
   )
 )
+
+;; Exercise an option contract with profit/loss calculation
+(define-public (exercise-option
+    (sbtc-token <ft-trait>)
+    (option-id uint)
+  )
+  (let (
+      (option (unwrap! (get-option option-id) ERR-OPTION-NOT-FOUND))
+      (current-price (get-current-price))
+    )
+    ;; Validate exercise conditions
+    (asserts! (is-eq tx-sender (get holder option)) ERR-NOT-AUTHORIZED)
+    (asserts! (< block-height (get expiry option)) ERR-OPTION-EXPIRED)
+    (asserts! (not (get exercised option)) ERR-ALREADY-EXERCISED)
+    ;; Execute option-specific exercise logic
+    (if (is-eq (get option-type option) OPTION-TYPE-CALL)
+      (asserts! (>= current-price (get strike-price option)) ERR-INVALID-AMOUNT)
+      (asserts! (<= current-price (get strike-price option)) ERR-INVALID-AMOUNT)
+    )
+    ;; Transfer collateral to option holder
+    (try! (transfer-sbtc sbtc-token (get collateral option) (as-contract tx-sender)
+      tx-sender
+    ))
+    ;; Mark option as exercised
+    (map-set Options { option-id: option-id } (merge option { exercised: true }))
+    ;; Update global exercise statistics
+    (var-set total-options-exercised (+ (var-get total-options-exercised) u1))
+    (ok true)
+  )
+)
+
+;; Reclaim collateral from expired unexercised options
+(define-public (expire-option
+    (sbtc-token <ft-trait>)
+    (option-id uint)
+  )
+  (let ((option (unwrap! (get-option option-id) ERR-OPTION-NOT-FOUND)))
+    ;; Validate expiry conditions
+    (asserts! (>= block-height (get expiry option)) ERR-NOT-EXPIRED)
+    (asserts! (not (get exercised option)) ERR-ALREADY-EXERCISED)
+    (asserts! (is-eq tx-sender (get writer option)) ERR-NOT-AUTHORIZED)
+    ;; Return collateral to original writer
+    (try! (transfer-sbtc sbtc-token (get collateral option) (as-contract tx-sender)
+      (get writer option)
+    ))
+    ;; Mark option as settled
+    (map-set Options { option-id: option-id } (merge option { exercised: true }))
+    (ok true)
+  )
+)
+
+;; CONTRACT INITIALIZATION
+
+;; Initialize contract state variables
+(begin
+  (var-set next-option-id u1)
+  (var-set total-options-created u0)
+  (var-set total-options-exercised u0)
+)
