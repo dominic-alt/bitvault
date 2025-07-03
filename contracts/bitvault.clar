@@ -75,3 +75,89 @@
 ;; Precision and timing constants
 (define-constant PRECISION u100000000) ;; 8 decimal places for BTC precision
 (define-constant MIN-EXPIRY-BLOCKS u144) ;; Minimum 24 hours (144 blocks at 10min/block)
+
+;; Option type identifiers
+(define-constant OPTION-TYPE-CALL "CALL")
+(define-constant OPTION-TYPE-PUT "PUT")
+
+;; STATE VARIABLES
+
+(define-data-var next-option-id uint u1)
+(define-data-var total-options-created uint u0)
+(define-data-var total-options-exercised uint u0)
+
+;; DATA STRUCTURES
+
+;; Primary options storage with comprehensive metadata
+(define-map Options
+  { option-id: uint }
+  {
+    writer: principal,
+    holder: principal,
+    option-type: (string-ascii 4),
+    strike-price: uint,
+    premium: uint,
+    collateral: uint,
+    expiry: uint,
+    exercised: bool,
+    created-at: uint,
+  }
+)
+
+;; User balance tracking for internal accounting
+(define-map UserBalances
+  { user: principal }
+  { balance: uint }
+)
+
+;; PRIVATE HELPER FUNCTIONS
+
+;; Validates option type against supported types
+(define-private (is-valid-option-type (option-type (string-ascii 4)))
+  (or
+    (is-eq option-type OPTION-TYPE-CALL)
+    (is-eq option-type OPTION-TYPE-PUT)
+  )
+)
+
+;; Secure token transfer with validation
+(define-private (transfer-sbtc
+    (token <ft-trait>)
+    (amount uint)
+    (sender principal)
+    (recipient principal)
+  )
+  (begin
+    (asserts! (> amount u0) ERR-ZERO-AMOUNT)
+    (contract-call? token transfer amount sender recipient none)
+  )
+)
+
+;; Comprehensive expiry validation
+(define-private (check-expiry (expiry uint))
+  (let ((min-expiry (+ block-height MIN-EXPIRY-BLOCKS)))
+    (asserts! (>= expiry min-expiry) ERR-EXPIRY-TOO-SOON)
+    (asserts! (> expiry block-height) ERR-OPTION-EXPIRED)
+    (ok true)
+  )
+)
+
+;; Strike price validation with market constraints
+(define-private (validate-strike-price (strike-price uint))
+  (begin
+    (asserts! (> strike-price u0) ERR-INVALID-STRIKE-PRICE)
+    (ok true)
+  )
+)
+
+;; Premium and collateral amount validation
+(define-private (validate-amounts
+    (premium uint)
+    (collateral uint)
+  )
+  (begin
+    (asserts! (> premium u0) ERR-ZERO-AMOUNT)
+    (asserts! (> collateral u0) ERR-ZERO-AMOUNT)
+    (ok true)
+  )
+)
